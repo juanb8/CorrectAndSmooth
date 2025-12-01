@@ -266,16 +266,39 @@ def get_run_from_file(out):
     return int(os.path.splitext(os.path.basename(out))[0])
 
 
-def get_orig_acc(data, eval_test, model_outs, split_idx):
-    logger_orig = Logger(len(model_outs))
-    for out in model_outs:
-        model_out, run = model_load(out)
-        if isinstance(model_out, tuple):
-            model_out, split_idx = model_out
-        test_acc = eval_test(model_out, split_idx['test'])
-        logger_orig.add_result(run, (eval_test(model_out, split_idx['train']), eval_test(model_out, split_idx['valid']), test_acc))
-    print('Original accuracy')
-    logger_orig.print_statistics()
+def get_orig_acc(data, eval_test, model_outs, split_idx,model_type=None):
+    if model_type == 'random_forest':
+        results = []
+        for out in model_outs:
+            model_out, run = model_load(out)
+            if isinstance(model_out, tuple):
+                model_out, split_idx = model_out
+            
+            train_acc = eval_test(model_out, split_idx['train'])
+            valid_acc = eval_test(model_out, split_idx['valid'])
+            test_acc = eval_test(model_out, split_idx['test'])
+            
+            results.append((train_acc, valid_acc, test_acc))
+        
+        results = torch.tensor(results) * 100
+        if len(results.shape) == 1:
+            results = results.unsqueeze(0)
+        
+        print(f'Original accuracy ({model_type})')
+        print(f'All runs:')
+        print(f'Train: {results[:, 0].mean():.4f} ± {results[:, 0].std():.4f}')
+        print(f'Valid: {results[:, 1].mean():.4f} ± {results[:, 1].std():.4f}')
+        print(f' Test: {results[:, 2].mean():.4f} ± {results[:, 2].std():.4f}')
+    else:
+        logger_orig = Logger(len(model_outs))
+        for out in model_outs:
+            model_out, run = model_load(out)
+            if isinstance(model_out, tuple):
+                model_out, split_idx = model_out
+            test_acc = eval_test(model_out, split_idx['test'])
+            logger_orig.add_result(run, (eval_test(model_out, split_idx['train']), eval_test(model_out, split_idx['valid']), test_acc))
+        print('Original accuracy')
+        logger_orig.print_statistics()
     
 def prepare_folder(name, model):
     model_dir = f'models/{name}'
@@ -284,6 +307,15 @@ def prepare_folder(name, model):
         shutil.rmtree(model_dir)
     os.makedirs(model_dir)
     with open(f'{model_dir}/metadata', 'w') as f:
-        f.write(f'# of params: {sum(p.numel() for p in model.parameters())}\n')
+        if hasattr(model, 'parameters') and callable(model.parameters):
+            try:
+                param_count = sum(p.numel() for p in model.parameters())
+                f.write(f'# of params: {param_count}\n')
+            except:
+                f.write(f'# of params: Unknown\n')
+        elif hasattr(model, 'num_parameters'):
+            f.write(f'# of params (approx): {model.num_parameters()}\n')
+        else:
+            f.write(f'Model type: {type(model).__name__}\n')
     return model_dir
 

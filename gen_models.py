@@ -30,6 +30,8 @@ import shutil
 
 from logger import Logger
 
+from random_forest_model import RandomForestWrapper
+
 class MLP(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels, num_layers,
                  dropout, relu_first = True):
@@ -159,7 +161,9 @@ def main():
         
     if args.dataset == 'arxiv':
         x = (x-x.mean(0))/x.std(0)
-
+        
+    if args.model == 'random_forest':
+        model = RandomForestWrapper(n_estimators=10, random_state=42)
     if args.model == 'mlp':        
         model = MLP(x.size(-1),args.hidden_channels, dataset.num_classes, args.num_layers, 0.5, args.dataset == 'products').to(device)
     elif args.model=='linear':
@@ -170,10 +174,9 @@ def main():
     x = x.to(device)
     y_true = data.y.to(device)
     train_idx = split_idx['train'].to(device)
-
     
-    model_dir = prepare_folder(f'{args.dataset}_{args.model}', model)
 
+    model_dir = prepare_folder(f'{args.dataset}_{args.model}', model)
     
     evaluator = Evaluator(name=f'ogbn-{args.dataset}')
     logger = Logger(args.runs, args)
@@ -181,26 +184,63 @@ def main():
     for run in range(args.runs):
         import gc
         gc.collect()
-        print(sum(p.numel() for p in model.parameters()))
-        model.reset_parameters()
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-        best_valid = 0
-        best_out = None
-        for epoch in range(1, args.epochs):
-            loss = train(model, x, y_true, train_idx, optimizer)
-            result, out = test(model, x, y_true, split_idx, evaluator)
-            train_acc, valid_acc, test_acc = result
-            if valid_acc > best_valid:
-                best_valid = valid_acc
-                best_out = out.cpu().exp()
-        
+        if args.model == 'random_forest':
+            # Random Forest training (single shot, no epochs)
+            print("Training Random Forest...")
+            model = RandomForestWrapper(n_estimators=10, random_state=42+run)
+#            model_dir = prepare_folder(f'{args.dataset}_{args.model}', model)
+            model.fit(data, split_idx)
+            
+            # Get predictions and convert to probabilities
+            best_out = model.predict_proba(data)
+            
+            # Evaluate on all splits
+            train_acc = evaluator.eval({
+                'y_true': data.y[split_idx['train']],
+                'y_pred': best_out[split_idx['train']].argmax(dim=1, keepdim=True)
+            })['acc']
+            valid_acc = evaluator.eval({
+                'y_true': data.y[split_idx['valid']], 
+                'y_pred': best_out[split_idx['valid']].argmax(dim=1, keepdim=True)
+            })['acc']
+            test_acc = evaluator.eval({
+                'y_true': data.y[split_idx['test']],
+                'y_pred': best_out[split_idx['test']].argmax(dim=1, keepdim=True)
+            })['acc']
+            
+            result = (train_acc, valid_acc, test_acc)
+            
+            # For logger compatibility: create a "fake" epoch progression
+            # Add the same result multiple times to simulate epochs
+            for epoch in range(args.epochs):
+                logger.add_result(run, result)
+            
             print(f'Run: {run + 1:02d}, '
-                      f'Epoch: {epoch:02d}, '
-                      f'Loss: {loss:.4f}, '
-                      f'Train: {100 * train_acc:.2f}%, '
-                      f'Valid: {100 * valid_acc:.2f}% '
-                      f'Test: {100 * test_acc:.2f}%')
-            logger.add_result(run, result)
+                f'Train: {100 * train_acc:.2f}%, '
+                f'Valid: {100 * valid_acc:.2f}% '
+                f'Test: {100 * test_acc:.2f}%')
+         
+        else: 
+            print(sum(p.numel() for p in model.parameters()))
+            model.reset_parameters()
+            optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+            best_valid = 0
+            best_out = None
+            for epoch in range(1, args.epochs):
+                loss = train(model, x, y_true, train_idx, optimizer)
+                result, out = test(model, x, y_true, split_idx, evaluator)
+                train_acc, valid_acc, test_acc = result
+                if valid_acc > best_valid:
+                    best_valid = valid_acc
+                    best_out = out.cpu().exp()
+            
+                print(f'Run: {run + 1:02d}, '
+                        f'Epoch: {epoch:02d}, '
+                        f'Loss: {loss:.4f}, '
+                        f'Train: {100 * train_acc:.2f}%, '
+                        f'Valid: {100 * valid_acc:.2f}% '
+                        f'Test: {100 * test_acc:.2f}%')
+                logger.add_result(run, result)
 
         logger.print_statistics(run)
         torch.save(best_out, f'{model_dir}/{run}.pt')

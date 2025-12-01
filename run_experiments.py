@@ -97,7 +97,19 @@ def main():
             'display': False,
         }
         gat_fn = only_outcome_correlation
-
+        
+          # Random Forest parameters
+        random_forest_dict = {
+            'train_only': True,
+            'alpha1': 0.9, 
+            'alpha2': 0.8, 
+            'A1': DAD, 
+            'A2': DAD,
+            'num_propagations1': 50,
+            'num_propagations2': 50,
+            'display': False,
+        }
+        random_forest_fn = double_correlation_autoscale
         
     elif args.dataset == 'products':
         lp_dict = {
@@ -154,7 +166,7 @@ def main():
         print('Test acc:', eval_test(out, split_idx['test']))
         return
     
-    get_orig_acc(data, eval_test, model_outs, split_idx)
+    get_orig_acc(data, eval_test, model_outs, split_idx, model_type=args.method)
     while True:
         if args.method == 'plain':
             evaluate_params(data, eval_test, model_outs, split_idx, plain_dict, fn = plain_fn)
@@ -165,6 +177,8 @@ def main():
         elif args.method == 'gat':
             evaluate_params(data, eval_test, model_outs, split_idx, gat_dict, fn = gat_fn) 
 #         import pdb; pdb.set_trace()
+        elif args.method == 'random_forest':
+            evaluate_params(data, eval_test, model_outs, split_idx, random_forest_dict, fn=random_forest_fn)
         break
         
 #     name = f'{args.experiment}_{args.search_type}_{args.model_dir}'
@@ -172,6 +186,6 @@ def main():
     
 #     return
 
-    
+
 if __name__ == "__main__":
     main()
