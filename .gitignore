@@ -1,7 +1,9 @@
 .ipynb_checkpoints
+.venv/
 .notes.md
 dataset/
 logs/
 models/
 embeddings/
+
 __*
